@@ -1,3 +1,5 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -6,6 +8,11 @@ import { db, ensureSchema, limparLocalizacoes } from "./db.js";
 import { agendarGeocodificacao } from "./geocodificar.js";
 import rastreio, { exigirAdmin, registrarAgendamentoCriado, codigo } from "./rastreio.js";
 import avisos from "./avisos.js";
+import pessoas from "./pessoas.js";
+
+// Necessário para usar __dirname com ES Modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,6 +21,7 @@ app.use(express.json({ limit: "600kb" }));
 app.use(cors());
 app.use("/api", rastreio);
 app.use("/api", avisos);
+app.use(pessoas); // /pessoas e /agendamentos (gravam em ../db.json)
 
 app.post("/salvar-agendamento", async (req, res) => {
     const {
@@ -81,7 +89,6 @@ app.get("/listar-agendamento", exigirAdmin, async (_req, res) => {
     const connection = db;
 
     try {
-        
         const [rows] = await connection.execute(
             "SELECT id, nome, telefone, dia, hora, rua, casa, bairro, complemento, quantidade_litros, observacoes FROM agendamentos"
         );
@@ -107,6 +114,29 @@ try {
 }
 limparLocalizacoes().catch((e) => console.warn("Limpeza de posições antigas falhou:", e.message));
 setInterval(() => limparLocalizacoes().catch(() => {}), 24 * 3600 * 1000).unref();
+
+// --- Rotas estáticas (Render) ---
+const DIST_EMPRESA = path.join(__dirname, '../area-da-empresa/frontend/dist');
+
+// 1. Site do cliente (bloqueando arquivos internos)
+app.use((req, res, next) => {
+    if (/^\/(db\.json|backend|package(-lock)?\.json)(\/|$)/i.test(req.path)) return res.status(404).end();
+    next();
+});
+app.use(express.static(path.join(__dirname, '../')));
+
+// 2. Tela da empresa em /empresa
+app.use('/empresa', express.static(DIST_EMPRESA));
+
+// 2b. A tela da empresa usa caminhos absolutos (/assets, /empresa.css, /frascos.html...),
+// então a mesma pasta também é servida na raiz.
+app.use(express.static(DIST_EMPRESA));
+
+// 3. Qualquer outra rota de /empresa devolve a página principal da empresa
+app.use('/empresa', (req, res) => {
+    res.sendFile(path.join(DIST_EMPRESA, 'index.html'));
+});
+// --------------------------------
 
 app.listen(PORT, () => {
     console.log(`Servidor rodando em http://localhost:${PORT}`);
